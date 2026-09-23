@@ -1,0 +1,182 @@
+name: CI
+
+# No `push` trigger: a feature branch's commits are already fully validated
+# by `pull_request` (which fires on open AND every subsequent push to an
+# open PR, per GitHub's default `synchronize` type). If your workflow is
+# always push-then-immediately-open-a-PR, a separate `push: branches: [...]`
+# trigger only duplicates the whole suite for the same commit, doubling
+# Actions-minutes usage for no added coverage.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # Enforce a real coverage gate here (e.g. `--coverage` + a threshold
+      # in your test runner config), not just "tests ran" — a green suite
+      # with no gate silently lets coverage erode over time.
+      - name: Test
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+        env:
+          # Non-secret build-time config goes here as plain values.
+          # Secrets go through ${{ secrets.* }} — never hardcode a real one.
+          NODE_ENV: production
+
+  # A real dependent service (not mocks) is what actually proves the E2E
+  # suite means something — swap postgres for whatever your app depends on.
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app_test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/app_test
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: playwright-report/
+          retention-days: 7
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for leaked secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Changes to CI itself, or to files that control how agents/tools operate
+  # in this repo, carry risk that lint/test/e2e can't catch — a broken test
+  # doesn't fail here, but a maliciously or accidentally weakened gate
+  # would still show "green". Branch protection with required reviewers
+  # isn't available on every plan (e.g. GitHub Free on a private repo), so
+  # this gate lives in-workflow instead: it doesn't block the merge below,
+  # but it does flag the PR for a human to look at after the fact.
+  sensitive_paths:
+    name: Check Sensitive Paths
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      hit: ${{ steps.check.outputs.hit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changes to process-controlling paths
+        id: check
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > /tmp/changed_files.txt
+          if grep -qE '^(\.github/workflows/|CLAUDE\.md$|AGENTS\.md$)' /tmp/changed_files.txt; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  auto-merge:
+    name: Auto-merge
+    needs: [lint-test-build, e2e, secret-scan, sensitive_paths]
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - name: Merge pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge --squash --delete-branch "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}"
+
+      # A push made with the default GITHUB_TOKEN does not trigger other
+      # workflows (GitHub's anti-recursion safeguard) — without this step,
+      # deploy.yml would never fire after an auto-merge.
+      - name: Trigger deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main --repo "${{ github.repository }}"
+
+  # Optional: notify a human when a sensitive-path PR just went to main.
+  # Swap the curl call for Slack/Discord/whatever you already use — the
+  # pattern (flag, don't block) is what matters, not the transport.
+  notify-sensitive-merge:
+    name: Notify Sensitive-Path Merge
+    needs: [lint-test-build, e2e, secret-scan, sensitive_paths, auto-merge]
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && needs.sensitive_paths.outputs.hit == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send notification
+        if: ${{ vars.NOTIFY_WEBHOOK_URL != '' }}
+        run: |
+          curl -s -X POST "${{ vars.NOTIFY_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"text\": \"PR #${{ github.event.pull_request.number }} touched a sensitive path and was auto-merged: ${{ github.event.pull_request.html_url }}\"}"
