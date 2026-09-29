@@ -1,0 +1,30 @@
+name: Self-test
+
+# Validates the template's own files so a broken workflow or hook is caught
+# here, not after someone copies it into a real project.
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint workflows and hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+
+      - name: yamllint
+        run: |
+          python3 -m pip install --quiet yamllint==1.35.1
+          yamllint --strict -c .yamllint.yml .github/
+
+      # The hook is a POSIX sh script without a shebang (Husky runs it with sh).
+      - name: shellcheck
+        run: shellcheck --shell=sh .husky/pre-push
