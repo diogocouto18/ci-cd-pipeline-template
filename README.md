@@ -1,5 +1,7 @@
 # ci-cd-pipeline-template
 
+[![Self-test](https://github.com/diogocouto18/ci-cd-pipeline-template/actions/workflows/self-test.yml/badge.svg)](https://github.com/diogocouto18/ci-cd-pipeline-template/actions/workflows/self-test.yml)
+
 A GitHub Actions CI/CD pipeline template: feature branch → PR → CI → auto-merge on green → explicit deploy trigger → a pre-push hook as a technical backstop. Proven in production on a real Next.js/Prisma app; genericized here so it's not tied to any specific stack.
 
 ## The pattern
@@ -27,6 +29,7 @@ feature branch
 - **`.github/workflows/ci.yml`** — lint/typecheck/test/build, E2E against a real Postgres container (swap for whatever your app depends on), gitleaks secret scanning, a "sensitive paths" check that flags (without blocking) PRs touching CI config or agent instruction files, and auto-merge + deploy-trigger.
 - **`.github/workflows/deploy.yml`** — SSH + Docker Compose deploy to a VPS, with a first-deploy-only `.env` write (so manual server-side edits survive future deploys) and a migration step before bringing the new containers up.
 - **`.husky/pre-push`** — blocks direct pushes to `main`.
+- **`.github/workflows/self-test.yml`** — this template's own CI (not meant to be copied): runs `actionlint` and `yamllint` (config in `.yamllint.yml`) on the workflows and `shellcheck` on the pre-push hook for every PR.
 
 ## Adopting this
 
