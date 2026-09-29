@@ -145,7 +145,12 @@ jobs:
   auto-merge:
     name: Auto-merge
     needs: [lint-test-build, e2e, secret-scan, sensitive_paths]
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    # Skipped for fork PRs: they must never be merged (or trigger a deploy)
+    # without a human looking at them first.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,7 +164,9 @@ jobs:
 
       # A push made with the default GITHUB_TOKEN does not trigger other
       # workflows (GitHub's anti-recursion safeguard) — without this step,
-      # deploy.yml would never fire after an auto-merge.
+      # deploy.yml would never fire after an auto-merge. For the same reason
+      # the auto-merge push does NOT fire deploy.yml's `push` trigger, so
+      # this is the only deploy for that merge.
       - name: Trigger deploy
         env:
           GH_TOKEN: ${{ github.token }}
