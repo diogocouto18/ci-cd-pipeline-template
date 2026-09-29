@@ -1,0 +1,42 @@
+# Example: Python/pytest variant of ci.yml. Copy to .github/workflows/ci.yml.
+# Only the lint/test/build job is language-specific. Add the e2e,
+# secret-scan, sensitive_paths, auto-merge and notify jobs from the root
+# ci.yml unchanged (adjust the auto-merge `needs:` list to match).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type check
+        run: mypy .
+
+      # --cov-fail-under is the coverage gate: the job fails below 80%.
+      - name: Test
+        run: pytest --cov=. --cov-fail-under=80
+
+      - name: Build
+        run: python -m build

@@ -1,0 +1,38 @@
+# Example: .NET variant of ci.yml. Copy to .github/workflows/ci.yml.
+# Only the lint/test/build job is language-specific. Add the e2e,
+# secret-scan, sensitive_paths, auto-merge and notify jobs from the root
+# ci.yml unchanged (adjust the auto-merge `needs:` list to match).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6.0.0
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Lint (format check)
+        run: dotnet format --verify-no-changes --no-restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      # The Threshold option is the coverage gate (needs the coverlet.msbuild package).
+      - name: Test
+        run: dotnet test --no-build --configuration Release /p:CollectCoverage=true /p:Threshold=80
