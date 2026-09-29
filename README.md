@@ -45,6 +45,17 @@ feature branch
    ```
 6. In GitHub repo settings, make sure Actions has permission to create and approve pull requests if you want the `auto-merge` job's `gh pr merge` to work.
 
+## Required repository settings
+
+The workflows depend on settings that live in GitHub, not in the repo files:
+
+- **Branch protection on `main`**: require a pull request and require the `Lint, Test & Build`, `E2E` and `Secret Scan` status checks to pass. This is the real gate; the pre-push hook is only a local backstop. (On some plans private repos cannot use branch protection; the pre-push hook and the in-workflow checks are then your only guard.)
+- **Actions can create and approve pull requests**: Settings > Actions > General > Workflow permissions, enable "Allow GitHub Actions to create and approve pull requests" and choose read and write permissions, so the `auto-merge` job's `gh pr merge` works.
+- **Allow auto-merge / delete branch on merge**: optional, but keeps the repo tidy after `--delete-branch`.
+- **A `production` environment**: Settings > Environments > New environment, named exactly `production` (`deploy.yml` uses `environment: production`). Add required reviewers there if deploys should need a manual approval, and restrict it to the `main` branch. Store the deploy secrets on the environment rather than the repo where possible.
+- **Secrets**: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (a dedicated deploy key, not a personal one), plus your app's own secrets referenced in `deploy.yml`.
+- **Variables** (optional): `NOTIFY_WEBHOOK_URL` for failure and sensitive-merge notifications.
+
 ## Auto-merge safety notes
 
 **Fork PRs are never auto-merged.** The `auto-merge` job only runs when `github.event.pull_request.head.repo.full_name == github.repository`. Fork PRs still get CI, but a maintainer has to merge them by hand.
@@ -60,6 +71,16 @@ feature branch
 - If someone merges manually, only the `push` trigger fires, and `auto-merge` fails at `gh pr merge` before reaching the deploy step (the PR is already merged).
 - If you replace `GITHUB_TOKEN` with a PAT or GitHub App token, pushes start triggering `deploy.yml` themselves: remove the explicit `Trigger deploy` step, or the merge will deploy twice.
 - Keep a `concurrency` group (`cancel-in-progress: false`) on `deploy.yml` so any overlapping runs are serialized instead of running in parallel.
+
+## Other stacks
+
+`ci.yml` assumes npm scripts and a Postgres service container, but only the build/test steps are stack-specific. The [`examples/`](examples/) folder has minimal `lint-test-build` jobs, with a coverage gate, for:
+
+- [`examples/python/ci.yml`](examples/python/ci.yml): Python with ruff, mypy and pytest
+- [`examples/dotnet/ci.yml`](examples/dotnet/ci.yml): .NET with `dotnet format`, `dotnet test` and coverlet
+- [`examples/go/ci.yml`](examples/go/ci.yml): Go with gofmt, `go vet` and a coverage threshold
+
+Each example shows only the language-specific job; keep the secret-scan, sensitive-paths and auto-merge jobs from the root `ci.yml`. See [CONTRIBUTING.md](CONTRIBUTING.md) if you want to improve the template.
 
 ## What this deliberately doesn't do
 

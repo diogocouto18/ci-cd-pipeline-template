@@ -1,0 +1,43 @@
+# Example: Go variant of ci.yml. Copy to .github/workflows/ci.yml.
+# Only the lint/test/build job is language-specific. Add the e2e,
+# secret-scan, sensitive_paths, auto-merge and notify jobs from the root
+# ci.yml unchanged (adjust the auto-merge `needs:` list to match).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Lint
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      # Coverage gate: fail below 80% total statement coverage.
+      - name: Coverage gate
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { exit (t >= 80) ? 0 : 1 }'
+
+      - name: Build
+        run: go build ./...
