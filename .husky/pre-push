@@ -1,3 +1,4 @@
+# shellcheck disable=SC2034 # git passes 4 fields per line; only remote_ref is used
 protected_branch="main"
 
 while read -r local_ref local_sha remote_ref remote_sha; do

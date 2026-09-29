@@ -1,5 +1,7 @@
 # ci-cd-pipeline-template
 
+[![Self-test](https://github.com/diogocouto18/ci-cd-pipeline-template/actions/workflows/self-test.yml/badge.svg)](https://github.com/diogocouto18/ci-cd-pipeline-template/actions/workflows/self-test.yml)
+
 A GitHub Actions CI/CD pipeline template: feature branch → PR → CI → auto-merge on green → explicit deploy trigger → a pre-push hook as a technical backstop. Proven in production on a real Next.js/Prisma app; genericized here so it's not tied to any specific stack.
 
 ## The pattern
@@ -27,6 +29,7 @@ feature branch
 - **`.github/workflows/ci.yml`** — lint/typecheck/test/build, E2E against a real Postgres container (swap for whatever your app depends on), gitleaks secret scanning, a "sensitive paths" check that flags (without blocking) PRs touching CI config or agent instruction files, and auto-merge + deploy-trigger.
 - **`.github/workflows/deploy.yml`** — SSH + Docker Compose deploy to a VPS, with a first-deploy-only `.env` write (so manual server-side edits survive future deploys) and a migration step before bringing the new containers up.
 - **`.husky/pre-push`** — blocks direct pushes to `main`.
+- **`.github/workflows/self-test.yml`** — this template's own CI (not meant to be copied): runs `actionlint` and `yamllint` (config in `.yamllint.yml`) on the workflows and `shellcheck` on the pre-push hook for every PR.
 
 ## Adopting this
 
@@ -52,6 +55,22 @@ The workflows depend on settings that live in GitHub, not in the repo files:
 - **A `production` environment**: Settings > Environments > New environment, named exactly `production` (`deploy.yml` uses `environment: production`). Add required reviewers there if deploys should need a manual approval, and restrict it to the `main` branch. Store the deploy secrets on the environment rather than the repo where possible.
 - **Secrets**: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (a dedicated deploy key, not a personal one), plus your app's own secrets referenced in `deploy.yml`.
 - **Variables** (optional): `NOTIFY_WEBHOOK_URL` for failure and sensitive-merge notifications.
+
+## Auto-merge safety notes
+
+**Fork PRs are never auto-merged.** The `auto-merge` job only runs when `github.event.pull_request.head.repo.full_name == github.repository`. Fork PRs still get CI, but a maintainer has to merge them by hand.
+
+**Trade-off: sensitive-path PRs are still auto-merged.** The `sensitive_paths` job only flags PRs touching `.github/workflows/`, `CLAUDE.md` or `AGENTS.md` (via `notify-sensitive-merge`); it does not block them. That keeps the flow fully automatic on plans without required reviewers, but it means a change that weakens CI can merge itself once the (possibly weakened) checks pass. If that is not acceptable for your repo, do one of these:
+
+- add `needs.sensitive_paths.outputs.hit != 'true'` to the `auto-merge` job's `if:` so those PRs wait for a human;
+- or enable branch protection with required reviewers / CODEOWNERS on those paths (the stronger option where your plan supports it).
+
+**Deploys do not run twice for one merge.** With the default setup only one deploy fires per merge:
+
+- Auto-merge pushes with `GITHUB_TOKEN`, which does not trigger `deploy.yml`'s `push: main` trigger, so the explicit `gh workflow run` step is the only deploy.
+- If someone merges manually, only the `push` trigger fires, and `auto-merge` fails at `gh pr merge` before reaching the deploy step (the PR is already merged).
+- If you replace `GITHUB_TOKEN` with a PAT or GitHub App token, pushes start triggering `deploy.yml` themselves: remove the explicit `Trigger deploy` step, or the merge will deploy twice.
+- Keep a `concurrency` group (`cancel-in-progress: false`) on `deploy.yml` so any overlapping runs are serialized instead of running in parallel.
 
 ## Other stacks
 

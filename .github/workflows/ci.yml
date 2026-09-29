@@ -11,15 +11,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: every job gets a read-only token unless it elevates below.
+permissions:
+  contents: read
+
 jobs:
   lint-test-build:
     name: Lint, Test & Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -67,10 +71,10 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: 'npm'
@@ -93,7 +97,7 @@ jobs:
 
       - name: Upload test report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-report
           path: playwright-report/
@@ -105,12 +109,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Scan for leaked secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -125,10 +129,12 @@ jobs:
     name: Check Sensitive Paths
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
     outputs:
       hit: ${{ steps.check.outputs.hit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -145,7 +151,12 @@ jobs:
   auto-merge:
     name: Auto-merge
     needs: [lint-test-build, e2e, secret-scan, sensitive_paths]
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    # Skipped for fork PRs: they must never be merged (or trigger a deploy)
+    # without a human looking at them first.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,7 +170,9 @@ jobs:
 
       # A push made with the default GITHUB_TOKEN does not trigger other
       # workflows (GitHub's anti-recursion safeguard) — without this step,
-      # deploy.yml would never fire after an auto-merge.
+      # deploy.yml would never fire after an auto-merge. For the same reason
+      # the auto-merge push does NOT fire deploy.yml's `push` trigger, so
+      # this is the only deploy for that merge.
       - name: Trigger deploy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -173,6 +186,7 @@ jobs:
     needs: [lint-test-build, e2e, secret-scan, sensitive_paths, auto-merge]
     if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && needs.sensitive_paths.outputs.hit == 'true'
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Send notification
         if: ${{ vars.NOTIFY_WEBHOOK_URL != '' }}
